@@ -997,22 +997,37 @@ The seed step is designed so the UI can integrate incrementally — any page who
 
 ## 19. Implementation Timeline
 
-**4–6 weeks, single engineer, focused work.**
+**7 days, aggressive — full-time focus, AI-assisted coding, no context switching.**
 
-| Week | Days | Milestone |
+| Day | Milestone | Deliverables |
 |---|---|---|
-| 1 | 1 | Bootstrap: Express 5 + TS strict + Mongoose + Redis + env validation + pino + `/health` |
-| 1 | 2-3 | Auth: email/password + JWT refresh rotation. Unblocks everything that needs `req.user`. |
-| 1 | 4-5 | Mongoose models (all 18 schemas) + `seed.ts`. Frontend unblocked to integrate. |
-| 2 | 6-10 | REST CRUD: tokens, signals, whales, scammers, LP pools, rugs, notifications, watchlist. Cursor pagination. |
-| 3 | 11-12 | Socket.IO: `/notifications` namespace + per-user rooms + JWT handshake + Change Streams. |
-| 3 | 13-14 | Google OAuth + SIWE wallet auth. |
-| 3 | 15 | R2 presigned uploads (avatar). |
-| 4 | 16-18 | BullMQ + `priceIngestor` worker (DexScreener + CoinGecko) + `/market` namespace. |
-| 4 | 19-22 | `holdersRefresh` (Moralis) + `rugScanner` (GoPlus) + `whalePoller` (Moralis Streams + Helius) + `socialHype`. |
-| 5 | 23-24 | Stripe billing + subscription gating middleware. |
-| 5 | 25 | Scammer reports moderation flow + admin routes. |
-| 5-6 | 26-30 | Rate limiting, Sentry, observability polish, Railway deploy, end-to-end smoke tests. |
+| **1** | Bootstrap + Auth + Schema + Seed | Express 5 + TS strict + Mongoose + Redis + env validation + pino + `/health`. Auth module complete (register/login/refresh/logout, bcrypt + JWT with refresh rotation, `authenticate` middleware). All 18 Mongoose schemas defined. `seeds/seed.ts` + 14 data files running — DB has ~200 seeded docs. Frontend is now unblocked to integrate. |
+| **2** | REST CRUD for all entities | Routes + controllers + zod schemas for: tokens (scanner/search/profile/history), signals, watchlist, whales (system + custom), LP pools, rug alerts, scammers (+ report submission), notifications, social hype, sentiment feed, influencers. Cursor pagination helper in `lib/pagination.ts` reused across all list endpoints. Error envelope + requestId middleware + X-Request-Id logs. |
+| **3** | Socket.IO + Change Streams | `io` server + Redis adapter + JWT handshake middleware + 4 namespaces (`/market`, `/alerts`, `/notifications`, `/social`) + room helpers. Change Stream watchers on `rugAlerts`, `lpEvents`, `signals`, `notifications`, `walletActivityLog` → fan out to rooms. Reconnect backfill (`lastEventAt`) working. Manual `POST /_test/trigger-notif` dev-only route. |
+| **4** | BullMQ + priceIngestor + rugScanner | BullMQ queues (`prices`, `holders-refresh`, `pair-discovery`, `rug-scan`, `whale-poll`, `social-hype`, `notifications-fanout`, `email`). Worker process boots via `WORKER_ROLE=worker`. `priceIngestor` pulls DexScreener every 10s (CoinGecko fallback), writes `tokens` + `priceTicks`, emits `price:batch` to `global:scanner`. `rugScanner` calls GoPlus + Moralis, writes `rugAlerts` + `tokens.score`. bull-board admin UI mounted on `/admin/queues` (basic auth). |
+| **5** | OAuth + SIWE + Uploads + Moralis/Helius webhooks | Google OAuth (Authorization Code + PKCE) via `passport-google-oauth20`. SIWE wallet auth (nonce in Redis + `ethers.verifyMessage` EVM / `tweetnacl` Solana). R2 presigned PUT uploads for avatar (`POST /uploads/avatar/sign`). `holdersRefresh` worker (Moralis hourly). `whalePoller` webhook endpoints `/_webhooks/moralis` + `/_webhooks/helius` with HMAC verification, writing `walletActivityLog`. |
+| **6** | Billing + Admin + Rate limits | Stripe integration (`/billing/*` routes + `/billing/webhook` for subscription lifecycle). `requireSubscription('pro')` gate on paid features. Scammer report moderation admin routes + `requireAdmin` middleware. `express-rate-limit` + Redis store applied per route group (5/min auth, 5/hr reports, 100/min global). Resend-based email worker (verification, password reset, billing receipts). |
+| **7** | Deploy + Observability + E2E smoke | Sentry wired up (server + worker). Dockerfile + `railway.json` for two services (api + worker). Deploy to Railway with Atlas M0 + Upstash Redis + R2 bucket. Register Moralis Streams + Helius webhooks at production URLs. Run verification plan §21 end-to-end. Document any deferred items in README. |
+
+### What's deferred past Day 7 (not blockers)
+- **Social Hype worker** — seed data drives UI; wire Twitter/Telegram later.
+- **Contract scanner async job UI polish** — synchronous GoPlus call works for MVP.
+- **Admin dashboard UI** — admin routes exist; full dashboard is post-MVP.
+- **KYC uploads** — only avatar uploads shipped; KYC schema ready, routes stubbed.
+- **Full test suite** — critical-path vitest tests written; full coverage post-MVP.
+
+### Assumptions that make 7 days feasible
+1. All API keys in §4 ready on Day 1 (MongoDB, Redis, Moralis, GoPlus, Helius, CoinGecko, R2, Google OAuth).
+2. No infra detours (no custom Dockerfiles beyond a standard Node 20 image, no Kubernetes, no self-hosted Redis).
+3. Heavy use of boilerplate: feature module template (route + controller + service + schema + test) reused across 14 modules.
+4. Mock data seed is the integration-testing substrate — frontend integrates continuously instead of waiting.
+5. Frontend integration is **parallel work** (separate follow-up scope in §18), not in this 7-day budget.
+
+### Risk flags
+- **GoPlus rate limits** may throttle `rugScanner` on new pair bursts — `bottleneck` queue at 20/min + 24h Redis cache on results is mandatory from Day 4.
+- **Moralis Streams webhook delivery** can lag in free tier — keep 60s polling fallback in `whalePoller`.
+- **Atlas M0 connection cap (500)** could bite if both API and worker open many connections — use a shared Mongoose connection pool with `maxPoolSize: 10` per process.
+- **First-time Chromium/Puppeteer install** for any PDF-generating features will fail behind strict firewalls — not needed for core backend, but noted.
 
 ---
 
