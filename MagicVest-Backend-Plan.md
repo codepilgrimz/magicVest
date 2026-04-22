@@ -749,6 +749,34 @@ Workers run in a separate process (`WORKER_ROLE=worker`) so API latency is indep
 
 ## 11. External Data Sources — Per Field
 
+### Supported chains
+
+All six user-facing chains are supported end-to-end. Chain routing happens inside each integration wrapper — the service layer calls `getHolders(chain, addr)` and the wrapper chooses the right upstream.
+
+| Chain | `chain` enum | DexScreener ID | Moralis chain | GoPlus chain_id | Helius | Whale source |
+|---|---|---|---|---|---|---|
+| Ethereum | `ETH` | `ethereum` | `eth` | `1` | — | Moralis Streams |
+| Solana | `SOL` | `solana` | — | Solana endpoint | ✓ | Helius webhooks |
+| BNB Smart Chain | `BSC` | `bsc` | `bsc` | `56` | — | Moralis Streams |
+| Arbitrum | `ARB` | `arbitrum` | `arbitrum` | `42161` | — | Moralis Streams |
+| Base | `BASE` | `base` | `base` | `8453` | — | Moralis Streams |
+| Polygon | `POLY` | `polygon` | `polygon` | `137` | — | Moralis Streams |
+
+Per-chain implementation notes:
+- **EVM chains (ETH / BSC / ARB / BASE / POLY)** share one code path. Moralis handles holders + streams; GoPlus handles rug flags; DexScreener handles price.
+- **Solana** is the only non-EVM chain. Holders via Helius `getTokenAccountsByOwner` / token-supply, whale tx via Helius `enhanced transactions` webhooks, rug flags via GoPlus Solana-specific endpoint (`/api/v1/solana/token_security`). Signature verification on SIWE uses `tweetnacl` instead of `ethers.verifyMessage`.
+- **Contract address PK**: tokens are keyed by `(chain, addr)` so the same symbol can exist on multiple chains (e.g. USDC on ETH / BASE / ARB / POLY are separate `tokens` docs).
+- **MULTI**: the `chain` enum includes `"MULTI"` for cross-chain scammer entries and bridge exploits that span multiple networks.
+
+### Adding a new chain later
+To support e.g. Optimism or Avalanche, three touchpoints change:
+1. Add the chain to the `tokens.chain` / `onboarding.chains` enum in `src/models/*.ts`.
+2. Add the chain-ID mapping in `src/integrations/goplus.ts` and `src/integrations/moralis.ts`.
+3. Register a new Moralis Stream pointing at the existing `/_webhooks/moralis` endpoint.
+No frontend change required — the UI reads `token.chain` as a display string.
+
+### Per-field mapping
+
 For a scanner row (e.g. PEENPE/ETH at $18.56, 32,987 holders, $340M mcap):
 
 | Field | Source | Call pattern |
